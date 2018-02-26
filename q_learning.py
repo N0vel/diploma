@@ -10,7 +10,7 @@ class Q_learning():
         vrep.simxFinish(-1)
         self.venv = vrepper(headless=headless, dir_vrep="C:/Program Files/V-REP3/V-REP_PRO_EDU/")
         self.venv.start()
-        self.venv.load_scene(os.getcwd() + '/scenes/diploma.ttt')
+        self.venv.load_scene(os.path.dirname(os.getcwd()) + '/scenes/diploma.ttt')
         self.sensors = ['sensor_leftleft', 'sensor_left', 'sensor_front', 'sensor_right', 'sensor_rightright']
         self.motors = ['motor_left_1', 'motor_left_2', 'motor_left_3', 'motor_right_1', 'motor_right_2',
                        'motor_right_3']

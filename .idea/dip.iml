@@ -5,6 +5,7 @@
       <sourceFolder url="file://$MODULE_DIR$/ddpg" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/a3c" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/vrepper" isTestSource="false" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />

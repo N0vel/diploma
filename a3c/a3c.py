@@ -25,13 +25,15 @@ N_S = 9  # number of states
 N_A = 2  # number of actions
 A_BOUND = [-1., 1.]  # action bounds
 
+os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 # Network for the Actor Critic
 class ACNet(object):
     def __init__(self, scope, sess, globalAC=None):
         self.sess = sess
-        self.actor_optimizer = tf.train.AdadeltaOptimizer(LR_A, name='RMSPropA')  # optimizer for the actor
-        self.critic_optimizer = tf.train.AdadeltaOptimizer(LR_C, name='RMSPropC')  # optimizer for the critic
+        self.actor_optimizer = tf.train.AdamOptimizer(LR_A, name='RMSPropA')  # optimizer for the actor
+        self.critic_optimizer = tf.train.AdamOptimizer(LR_C, name='RMSPropC')  # optimizer for the critic
 
         if scope == GLOBAL_NET_SCOPE:  # get global network
             with tf.variable_scope(scope):
@@ -83,21 +85,33 @@ class ACNet(object):
         with tf.variable_scope('actor'):
             l_a = tf.layers.dense(self.s, 512, tf.nn.tanh, kernel_initializer=w_init, name='la')
             a_d = tf.layers.dropout(inputs=l_a, rate=0.25)
+
             l_a1 = tf.layers.dense(a_d, 512, tf.nn.tanh, kernel_initializer=w_init, name='l_a1')
             a_d1 = tf.layers.dropout(inputs=l_a1, rate=0.25)
+
             l_a2 = tf.layers.dense(a_d1, 512, tf.nn.tanh, kernel_initializer=w_init, name='l_a2')
             a_d2 = tf.layers.dropout(inputs=l_a2, rate=0.25)
-            mu = tf.layers.dense(a_d2, N_A, tf.nn.tanh, kernel_initializer=w_init, name='mu')  # estimated action value
-            sigma = tf.layers.dense(a_d2, N_A, tf.nn.softplus, kernel_initializer=w_init,
+
+            l_a3 = tf.layers.dense(a_d2, 512, tf.nn.tanh, kernel_initializer=w_init, name='l_a3')
+            a_d3 = tf.layers.dropout(inputs=l_a3, rate=0.25)
+
+            mu = tf.layers.dense(a_d3, N_A, tf.nn.tanh, kernel_initializer=w_init, name='mu')  # estimated action value
+            sigma = tf.layers.dense(a_d3, N_A, tf.nn.softplus, kernel_initializer=w_init,
                                     name='sigma')  # estimated variance
         with tf.variable_scope('critic'):
             l_c = tf.layers.dense(self.s, 512, tf.nn.tanh, kernel_initializer=w_init, name='lc')
             c_d = tf.layers.dropout(inputs=l_c, rate=0.25)
+
             l_c1 = tf.layers.dense(c_d, 512, tf.nn.tanh, kernel_initializer=w_init, name='l_c1')
             c_d1 = tf.layers.dropout(inputs=l_c1, rate=0.25)
+
             l_c2 = tf.layers.dense(c_d1, 512, tf.nn.tanh, kernel_initializer=w_init, name='l_c2')
             c_d2 = tf.layers.dropout(inputs=l_c2, rate=0.25)
-            v = tf.layers.dense(c_d2, 1, kernel_initializer=w_init, name='v')  # estimated value for state
+
+            l_c3 = tf.layers.dense(c_d2, 512, tf.nn.tanh, kernel_initializer=w_init, name='l_c3')
+            c_d3 = tf.layers.dropout(inputs=l_c3, rate=0.25)
+
+            v = tf.layers.dense(c_d3, 1, kernel_initializer=w_init, name='v')  # estimated value for state
         a_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '/actor')
         c_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '/critic')
         return mu, sigma, v, a_params, c_params
