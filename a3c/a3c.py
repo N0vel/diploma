@@ -5,6 +5,7 @@ import os
 import shutil
 import matplotlib.pyplot as plt
 import tensorflow as tf
+import random
 from q_learning import Q_learning
 # PARAMETERS
 OUTPUT_GRAPH = True  # safe logs
@@ -27,6 +28,13 @@ A_BOUND = [-1., 1.]  # action bounds
 
 os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
 os.environ["CUDA_VISIBLE_DEVICES"]="1"
+
+"""
+Проверь сохранение графа, че-то сомнительное это log
+
+"""
+
+
 
 # Network for the Actor Critic
 class ACNet(object):
@@ -142,13 +150,13 @@ class Worker(object):
         while not coord.should_stop() and global_episodes < MAX_GLOBAL_EP:
             self.env.reset()
             ep_r = 0
+            s = self.env.read_data(step=False)
             for ep_t in range(MAX_EP_STEP):
-                s = self.env.read_data(step=False)
                 a = self.AC.choose_action(s)  # estimate stochastic action based on policy
-                s_, r, done, info = self.env.step(a)  # make step in environment
+                s_, r, done = self.env.step(a)  # make step in environment
+                print(r, done)
                 if not done:
                     done = True if ep_t == MAX_EP_STEP - 1 else False
-
                 ep_r += r
                 # save actions, states and rewards in buffer
                 buffer_s.append(s)
@@ -156,8 +164,8 @@ class Worker(object):
                 # buffer_r.append((r + 8) / 8)  # normalize reward    ##################################
                 buffer_r.append(r)
 
-                if total_step % UPDATE_GLOBAL_ITER == 0 or done or info:  # update global and assign to local net
-                    if done or info:
+                if total_step % UPDATE_GLOBAL_ITER == 0 or done:  # update global and assign to local net
+                    if done:
                         v_s_ = 0  # terminal
                     else:
                         v_s_ = self.sess.run(self.AC.v, {self.AC.s: s_[np.newaxis, :]})[0, 0]
@@ -166,7 +174,6 @@ class Worker(object):
                         v_s_ = r + GAMMA * v_s_
                         buffer_v_target.append(v_s_)
                     buffer_v_target.reverse()
-
                     buffer_s, buffer_a, buffer_v_target = np.vstack(buffer_s), np.vstack(buffer_a), np.vstack(
                         buffer_v_target)
                     feed_dict = {
@@ -180,7 +187,7 @@ class Worker(object):
 
                 s = s_
                 total_step += 1
-                if done or info:
+                if done:
                     if len(global_rewards) < 5:  # record running episode reward
                         global_rewards.append(ep_r)
                     else:
@@ -201,7 +208,7 @@ if __name__ == "__main__":
 
     sess = tf.Session()
 
-    with tf.device("/cpu:0"):
+    with tf.device("/gpu:0"):
         global_ac = ACNet(GLOBAL_NET_SCOPE, sess)  # we only need its params
         workers = []
         # Create workersgit reset --hard tags/v2.0
@@ -223,6 +230,7 @@ if __name__ == "__main__":
         t = threading.Thread(target=job)
         t.start()
         worker_threads.append(t)
+
     coord.join(worker_threads)  # wait for termination of workers
 
     plt.plot(np.arange(len(global_rewards)), global_rewards)  # plot rewards

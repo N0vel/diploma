@@ -2,12 +2,12 @@ import sys
 import os
 import numpy as np
 from vrepper.vrepper import vrepper
-from vrepper.vrepper import vrep
+from vrepper import vrep
 import math
+import random
 # взаимодействие с v-rep
 class Q_learning():
-    def __init__(self, headless=True):
-        vrep.simxFinish(-1)
+    def __init__(self, headless=False):
         self.venv = vrepper(headless=headless, dir_vrep="C:/Program Files/V-REP3/V-REP_PRO_EDU/")
         self.venv.start()
         self.venv.load_scene(os.path.dirname(os.getcwd()) + '/scenes/diploma.ttt')
@@ -109,8 +109,9 @@ class Q_learning():
         #     reward -= 2
         # if 0. < reward < 1.:
         #     reward = np.power(reward, 2)
-        have_to_reset = abs(self.get_orientation()) > 0.01
-        return data, reward, done, have_to_reset
+        if not done:
+            done = abs(self.get_orientation()) > 0.01
+        return data, reward, done
 
     def done(self):
         self.venv.stop_simulation()

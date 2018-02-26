@@ -165,12 +165,12 @@ class vrepper():
         retries = 0
         while True:
             print ('(vrepper)trying to connect to server on port', self.port_num, 'retry:', retries)
-            # vrep.simxFinish(-1) # just in case, close all opened connections
+            vrep.simxFinish(-1) # just in case, close all opened connections
             self.cid = self.simxStart(
                 '127.0.0.1', self.port_num,
                 waitUntilConnected=True,
                 doNotReconnectOnceDisconnected=True,
-                timeOutInMs=1000,
+                timeOutInMs=3000,
                 commThreadCycleInMs=0)  # Connect to V-REP
 
             if self.cid != -1:
