@@ -102,15 +102,16 @@ class Q_learning():
         self.venv.step_blocking_simulation()
         data = self.read_data(step=True)
         done = self.distance < 1.0
-        reward = (self.prev_distance - self.distance)*100.
+        reward = (self.prev_distance - self.distance)*100. - 1.
         # if np.any(data[:5] < 0.2):
         #     reward -= (0.15-np.min(data[:5])) * 50.
         # if np.all(speed < 0):
         #     reward -= 2
         # if 0. < reward < 1.:
         #     reward = np.power(reward, 2)
-        if not done:
-            done = abs(self.get_orientation()) > 0.01
+
+        # if not done:
+        #     done = abs(self.get_orientation()) > 0.01
         return data, reward, done
 
     def done(self):
