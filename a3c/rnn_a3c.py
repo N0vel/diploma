@@ -10,13 +10,12 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 from q_learning import Q_learning
 
+# ADD SAVING!!! Dunno how to do it due to all this threading and global net shit
 
 # PARAMETERS
-OUTPUT_GRAPH = True  # safe logs
-LOG_DIR = './log'  # savelocation for logs
 N_WORKERS = 4
 MAX_EP_STEP = 5000  # maxumum number of steps per episode
-MAX_GLOBAL_EP = 100000  # total number of episodes
+MAX_GLOBAL_EP = 20  # total number of episodes
 GLOBAL_NET_SCOPE = 'Global_Net'
 UPDATE_GLOBAL_ITER = 1  # sets how often the global net is updated  # 10
 GAMMA = 0.99  # discount factor                                    #0.9
@@ -210,7 +209,6 @@ class Worker(object):
 
 if __name__ == "__main__":
     SESS = tf.Session()
-
     OPT_A = tf.train.AdamOptimizer(LR_A, name='AdamA')
     OPT_C = tf.train.AdamOptimizer(LR_C, name='AdamC')
     GLOBAL_AC = ACNet(GLOBAL_NET_SCOPE)  # we only need its params
@@ -219,23 +217,16 @@ if __name__ == "__main__":
     for i in range(N_WORKERS):
         i_name = 'W_%i' % i  # worker name
         workers.append(Worker(i_name, GLOBAL_AC))
-
     COORD = tf.train.Coordinator()
     SESS.run(tf.global_variables_initializer())
-
-    if OUTPUT_GRAPH:
-        if os.path.exists(LOG_DIR):
-            shutil.rmtree(LOG_DIR)
-        tf.summary.FileWriter(LOG_DIR, SESS.graph)
-
     worker_threads = []
     for worker in workers:
         job = lambda: worker.work()
         t = threading.Thread(target=job)
         t.start()
         worker_threads.append(t)
-    COORD.join(worker_threads)
 
+    COORD.join(worker_threads)
     plt.plot(np.arange(len(GLOBAL_RUNNING_R)), GLOBAL_RUNNING_R)
     plt.xlabel('step')
     plt.ylabel('Total moving reward')
