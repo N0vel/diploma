@@ -1,3 +1,6 @@
+import os
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import time
 import math
 import numpy as np
@@ -12,11 +15,12 @@ import _pickle as pickle
 def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
     BUFFER_SIZE = 1000000
     BATCH_SIZE = 32
-    GAMMA = 0.99
+    GAMMA_1 = 0.99  # gamma for target
+    GAMMA_2 = 0.97 # discount factor or something like this for reward -> value conversion
     # if not working, try smaller learning rate
     TAU = 0.001  # Target Network HyperParameters
-    LRA = 0.00000001  # Learning rate for Actor
-    LRC = 0.0000001  # Learning rate for Critic
+    LRA = 0.0000001  # Learning rate for Actor
+    LRC = 0.000001  # Learning rate for Critic
     action_dim = 2  #num of joints being controlled
     state_dim = 9  #num of features in state
 
@@ -24,7 +28,6 @@ def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
     episode_count = pow(10, 10) if (train_indicator) else 1
     reward = 0
     done = False
-    have_to_reset = False
     step = 0
     epsilon = 0.6 if (train_indicator) else 0.0
     max_steps = 5000
@@ -39,7 +42,6 @@ def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
         critic = CriticNetwork(sess, state_dim, action_dim, BATCH_SIZE, TAU, LRC)
     buff = ReplayBuffer(BUFFER_SIZE)    #Create replay buffer
     episode_buff = list()
-    # Generate a Torcs environment
     env = Q_learning(headless=False)
 
     #Now load the weight
@@ -73,7 +75,7 @@ def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
             else:
                 a_type = "Explore"
                 a_t = np.random.uniform(0, 1, size=action_dim)
-            ob, r_t, done, have_to_reset = env.step(a_t)
+            ob, r_t, done = env.step(a_t)
             if j == 0:
                 start_distance = env.distance
             s_t1 = ob.flatten()
@@ -86,14 +88,12 @@ def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
                 rewards = np.asarray([e[2] for e in batch])
                 new_states = np.asarray([e[3] for e in batch]).reshape((len(batch), state_dim))
                 dones = np.asarray([e[4] for e in batch])
-                y_t = np.asarray([e[1].flatten() for e in batch]).reshape((len(batch), action_dim))
+                y_t = np.asarray([e[2] for e in batch])
                 predictions = actor.target_model.predict(new_states)
                 target_q_values = critic.target_model.predict([new_states, predictions])
                 for k in range(len(batch)):
-                    if dones[k]:
-                        y_t[k] = rewards[k]
-                    else:
-                        y_t[k] = rewards[k] + GAMMA * target_q_values[k]
+                    if not dones[k]:
+                        y_t[k] = rewards[k] + GAMMA_1 * target_q_values[k]
                 if (train_indicator):
                     loss += critic.model.train_on_batch([states, actions], y_t)
                     a_for_grad = actor.model.predict(states)
@@ -112,31 +112,26 @@ def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
                   epsilon, "Time %.2f" % (j * 0.05), "Distance %.3f" % env.distance, "Angle %.3f" % env.angle, "Action",
                   a_t)
             step += 1
-            if have_to_reset or done or j == max_steps - 1:
-                if done:
-                    for i in range(len(episode_buff)):
-                        """
-                        Try to change +=
-                        """
-                        # episode_buff[i][2] += 100. * (start_distance - env.distance)/len(episode_buff)
-                        buff.add(episode_buff[i][0], episode_buff[i][1], episode_buff[i][2], episode_buff[i][3],
-                                 episode_buff[i][4])
-                else:
-                    for i in range(len(episode_buff)):
-                        # episode_buff[i][2] += 100. * (start_distance - env.distance) / len(episode_buff) - 2.
-                        episode_buff[i][2] -= 2.
-                        buff.add(episode_buff[i][0], episode_buff[i][1], episode_buff[i][2], episode_buff[i][3],
-                                 episode_buff[i][4])
-                episode_buff = list()
-                have_to_reset = False
+            if done or j == max_steps - 1:
+                value = 0
+                value_buf = []
+                for r in episode_buff[::-1]:
+                    value = r[2] - GAMMA_2 * value  ###  try changing it (-)
+                    value_buf.append(value)
+                value_buf.reverse()
+
+                for v in range(len(episode_buff)):
+                    buff.add(episode_buff[v][0], episode_buff[v][1], value_buf[v], episode_buff[v][3],
+                             episode_buff[v][4])
+
+                episode_buff[:] = []
                 break
         if (train_indicator) and i % 10 == 0:
             print("Now we save model")
             actor.model.save_weights("actormodel.h5", overwrite=True)
             critic.model.save_weights("criticmodel.h5", overwrite=True)
-            if i % 10 == 0:
-                with open('buff.pickle', 'wb') as f:
-                    pickle.dump(buff, f)
+            with open('buff.pickle', 'wb') as f:
+                pickle.dump(buff, f)
 
         print("TOTAL REWARD @ " + str(i) +"-th Episode  : Reward " + str(total_reward))
         print("Total Step: " + str(step))

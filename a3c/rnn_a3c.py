@@ -1,3 +1,6 @@
+import os
+# os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import multiprocessing
 import threading
 import numpy as np
@@ -11,41 +14,42 @@ from q_learning import Q_learning
 # PARAMETERS
 OUTPUT_GRAPH = True  # safe logs
 LOG_DIR = './log'  # savelocation for logs
-N_WORKERS = 1
+N_WORKERS = 4
 MAX_EP_STEP = 5000  # maxumum number of steps per episode
 MAX_GLOBAL_EP = 100000  # total number of episodes
 GLOBAL_NET_SCOPE = 'Global_Net'
 UPDATE_GLOBAL_ITER = 1  # sets how often the global net is updated  # 10
 GAMMA = 0.99  # discount factor                                    #0.9
-ENTROPY_BETA = 0.01  # entropy factor                                #0.01
+# ENTROPY_BETA = 0.01  # entropy factor                                #0.01
+ENTROPY_BETA = 0.1
 LR_A = 0.0001  # learning rate for actor
 LR_C = 0.001  # learning rate for critic
 GLOBAL_RUNNING_R = []
 GLOBAL_EP = 0
 # set environment
-N_S = 9  # number of states
+IMG_WIDTH = 64
+IMG_HEIGHT = 64
+IMG_CHANNELS = 3
+data_size = 2
 N_A = 2  # number of actions
 A_BOUND = [-1., 1.]  # action bounds
-
-os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"   # see issue #152
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
 
 
 
 
 class ACNet(object):
     def __init__(self, scope, globalAC=None):
-
         if scope == GLOBAL_NET_SCOPE:   # get global network
             with tf.variable_scope(scope):
-                self.s = tf.placeholder(tf.float32, [None, N_S], 'S')
+                self.image = tf.placeholder(tf.float32, [None, IMG_WIDTH, IMG_HEIGHT, IMG_CHANNELS], 'image')
+                self.d_input = tf.placeholder(tf.float32, [None, data_size], 'data')
                 self.a_params, self.c_params = self._build_net(scope)[-2:]
         else:   # local net, calculate losses
             with tf.variable_scope(scope):
-                self.s = tf.placeholder(tf.float32, [None, N_S], 'S')
+                self.image = tf.placeholder(tf.float32, [None, IMG_WIDTH, IMG_HEIGHT, IMG_CHANNELS], 'image')
+                self.d_input = tf.placeholder(tf.float32, [None, data_size], 'data')
                 self.a_his = tf.placeholder(tf.float32, [None, N_A], 'A')
                 self.v_target = tf.placeholder(tf.float32, [None, 1], 'Vtarget')
-
                 mu, sigma, self.v, self.a_params, self.c_params = self._build_net(scope)
 
                 td = tf.subtract(self.v_target, self.v, name='TD_error')
@@ -82,21 +86,36 @@ class ACNet(object):
         w_init = tf.random_normal_initializer(0., .1)
         with tf.variable_scope('critic'):   # only critic controls the rnn update
             cell_size = 256
-            s = tf.expand_dims(self.s, axis=1,
-                               name='timely_input')  # [time_step, feature] => [time_step, batch, feature]
-            rnn_cell = tf.contrib.rnn.BasicRNNCell(cell_size)
-            self.init_state = rnn_cell.zero_state(batch_size=1, dtype=tf.float32)
-
-            outputs, self.final_state = tf.nn.dynamic_rnn(
-                cell=rnn_cell, inputs=s, initial_state=self.init_state, time_major=True)
+            conv1 = tf.layers.conv2d(
+                inputs=self.image,
+                filters=64,
+                kernel_size=[3, 3],
+                padding="same",
+                activation=tf.nn.relu6)
+            pool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=[2, 2], strides=2)
+            conv2 = tf.layers.conv2d(
+                inputs=pool1,
+                filters=64,
+                kernel_size=[3, 3],
+                padding="same",
+                activation=tf.nn.relu6)
+            flat = tf.layers.flatten(conv2)
+            dense_1 = tf.layers.dense(self.d_input, units=256, activation=tf.nn.tanh, kernel_initializer=w_init)
+            dense_2 = tf.layers.dense(dense_1, units=256, activation=tf.nn.tanh, kernel_initializer=w_init)
+            concat = tf.concat([flat, dense_2], axis=1)
+            gru_in = tf.expand_dims(concat, axis=1, name='timely_input')  # [time_step, feature] => [time_step, batch, feature]
+            gru_cell = tf.contrib.rnn.GRUCell(cell_size)
+            self.init_state = gru_cell.zero_state(batch_size=1, dtype=tf.float32)
+            outputs, self.final_state = tf.nn.dynamic_rnn(cell=gru_cell, inputs=gru_in, initial_state=self.init_state, time_major=True)
             cell_out = tf.reshape(outputs, [-1, cell_size], name='flatten_rnn_outputs')  # joined state representation
-            l_c = tf.layers.dense(cell_out, 256, activation=tf.nn.relu6, kernel_initializer=w_init, name='lc')      #consider activation
+            l_c = tf.layers.dense(cell_out, 256, activation=tf.nn.tanh, kernel_initializer=w_init, name='lc')      #consider activation
             v = tf.layers.dense(l_c, 1, activation=None, kernel_initializer=w_init, name='v')  # state value
 
         with tf.variable_scope('actor'):  # state representation is based on critic
-            l_a = tf.layers.dense(cell_out, 256, tf.nn.tanh, kernel_initializer=w_init, name='la')
-            mu = tf.layers.dense(l_a, N_A, tf.nn.tanh, kernel_initializer=w_init, name='mu')
-            sigma = tf.layers.dense(l_a, N_A, tf.nn.softplus, kernel_initializer=w_init, name='sigma')
+            l_a_1 = tf.layers.dense(cell_out, 256, tf.nn.tanh, kernel_initializer=w_init, name='la1')
+            l_a_2 = tf.layers.dense(l_a_1, 256, tf.nn.tanh, kernel_initializer=w_init, name='la2')
+            mu = tf.layers.dense(l_a_2, N_A, tf.nn.tanh, kernel_initializer=w_init, name='mu')
+            sigma = tf.layers.dense(l_a_2, N_A, tf.nn.softplus, kernel_initializer=w_init, name='sigma')
         a_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '/actor')
         c_params = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=scope + '/critic')
         return mu, sigma, v, a_params, c_params
@@ -107,36 +126,39 @@ class ACNet(object):
     def pull_global(self):  # run by a local
         SESS.run([self.pull_a_params_op, self.pull_c_params_op])
 
-    def choose_action(self, s, cell_state):  # run by a local
-        s = s[np.newaxis, :]
-        a, cell_state = SESS.run([self.A, self.final_state], {self.s: s, self.init_state: cell_state})
+    def choose_action(self, data, image, cell_state):  # run by a local
+        data = data[np.newaxis, :]
+        image = image[np.newaxis, :]
+        a, cell_state = SESS.run([self.A, self.final_state], {self.d_input: data, self.image: image, self.init_state: cell_state})
         return a[0], cell_state
 
 
 # worker class that inits own environment, trains on it and updloads weights to global net
 class Worker(object):
     def __init__(self, name, globalAC):
-        self.env = Q_learning(headless=False)
+        scene_path = os.path.dirname(os.getcwd()) + '/scenes/diploma.ttt'
+        self.env = Q_learning(headless=True, scene_path=scene_path)
         self.name = name
         self.AC = ACNet(name, globalAC)  # create ACNet for each worker
 
     def work(self):
         global GLOBAL_RUNNING_R, GLOBAL_EP
         total_step = 1
-        buffer_s, buffer_a, buffer_r = [], [], []
+        buffer_image, buffer_data, buffer_a, buffer_r = [], [], [], []
         while not COORD.should_stop() and GLOBAL_EP < MAX_GLOBAL_EP:
             self.env.reset()
-            s = self.env.read_data(step=False)
+            data, image = self.env.read_data(step=False)
             ep_r = 0
             rnn_state = SESS.run(self.AC.init_state)  # zero rnn state at beginning
             keep_state = rnn_state.copy()  # keep rnn state for updating global net
             for ep_t in range(MAX_EP_STEP):
-                a, rnn_state_ = self.AC.choose_action(s, rnn_state)  # get the action and next rnn state
-                s_, r, done = self.env.step(a)  # make step in environment
+                a, rnn_state_ = self.AC.choose_action(data, image, rnn_state)  # get the action and next rnn state
+                next_data, next_image, r, done = self.env.step(a)  # make step in environment
                 if not done:
                     done = True if ep_t == MAX_EP_STEP - 1 else False
                 ep_r += r
-                buffer_s.append(s)
+                buffer_image.append(image[np.newaxis, :])
+                buffer_data.append(data[np.newaxis, :])
                 buffer_a.append(a)
                 buffer_r.append((r + 8) / 8)  # normalize
 
@@ -144,28 +166,32 @@ class Worker(object):
                     if done:
                         v_s_ = 0   # terminal
                     else:
-                        v_s_ = SESS.run(self.AC.v, {self.AC.s: s_[np.newaxis, :], self.AC.init_state: rnn_state_})[0, 0]
+                        v_s_ = SESS.run(self.AC.v, {self.AC.image: next_image[np.newaxis, :],
+                                                    self.AC.d_input: next_data[np.newaxis, :],
+                                                    self.AC.init_state: rnn_state_})[0, 0]
                     buffer_v_target = []
                     for r in buffer_r[::-1]:    # reverse buffer r
                         v_s_ = r + GAMMA * v_s_
                         buffer_v_target.append(v_s_)
                     buffer_v_target.reverse()
 
-                    buffer_s, buffer_a, buffer_v_target = np.vstack(buffer_s), np.vstack(buffer_a), np.vstack(buffer_v_target)
+                    buffer_image, buffer_data, buffer_a, buffer_v_target = np.vstack(buffer_image), np.vstack(buffer_data),\
+                                                                           np.vstack(buffer_a), np.vstack(buffer_v_target)
 
                     feed_dict = {
-                        self.AC.s: buffer_s,
+                        self.AC.image: buffer_image,
+                        self.AC.d_input: buffer_data,
                         self.AC.a_his: buffer_a,
                         self.AC.v_target: buffer_v_target,
                         self.AC.init_state: keep_state,
                     }
 
                     self.AC.update_global(feed_dict)
-                    buffer_s, buffer_a, buffer_r = [], [], []
+                    buffer_image, buffer_data, buffer_a, buffer_r = [], [], [], []
                     self.AC.pull_global()
                     keep_state = rnn_state_.copy()   # replace the keep_state as the new initial rnn state_
 
-                s = s_
+                image, data = next_image, next_data
                 rnn_state = rnn_state_  # renew rnn state
                 total_step += 1
                 if done:
@@ -185,15 +211,14 @@ class Worker(object):
 if __name__ == "__main__":
     SESS = tf.Session()
 
-    with tf.device("/gpu:0"):
-        OPT_A = tf.train.RMSPropOptimizer(LR_A, name='RMSPropA')
-        OPT_C = tf.train.RMSPropOptimizer(LR_C, name='RMSPropC')
-        GLOBAL_AC = ACNet(GLOBAL_NET_SCOPE)  # we only need its params
-        workers = []
-        # Create worker
-        for i in range(N_WORKERS):
-            i_name = 'W_%i' % i   # worker name
-            workers.append(Worker(i_name, GLOBAL_AC))
+    OPT_A = tf.train.AdamOptimizer(LR_A, name='AdamA')
+    OPT_C = tf.train.AdamOptimizer(LR_C, name='AdamC')
+    GLOBAL_AC = ACNet(GLOBAL_NET_SCOPE)  # we only need its params
+    workers = []
+    # Create worker
+    for i in range(N_WORKERS):
+        i_name = 'W_%i' % i  # worker name
+        workers.append(Worker(i_name, GLOBAL_AC))
 
     COORD = tf.train.Coordinator()
     SESS.run(tf.global_variables_initializer())

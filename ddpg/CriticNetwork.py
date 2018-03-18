@@ -47,7 +47,7 @@ class CriticNetwork(object):
         h = concatenate([h1, A])
         h2 = Dense(HIDDEN2_UNITS, kernel_initializer='glorot_normal', activation='tanh')(h)
         h3 = Dense(HIDDEN3_UNITS, kernel_initializer='glorot_normal', activation='tanh')(h2)
-        V = Dense(action_dim, activation="linear", kernel_initializer="glorot_normal")(h3)
+        V = Dense(1, activation="linear", kernel_initializer="glorot_normal")(h3)
         model = Model(inputs=[S, A], outputs=V)
         adam = Adadelta(lr=1.0)
         model.compile(optimizer=adam, loss='mse')
