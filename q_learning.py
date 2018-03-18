@@ -224,8 +224,6 @@ class Q_learning():
         self.read_data(step=True)
         done = self.distance < 1.0
         reward = (self.prev_distance - self.distance)
-        if not done:
-            done = abs(self.get_orientation()) > 0.01
         return self.data, self.image, reward, done
 
     def done(self):
