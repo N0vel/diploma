@@ -41,6 +41,7 @@ class instance():
 # взаимодействие с v-rep
 class Q_learning():
     def __init__(self, headless=False, port_num=None, dir_vrep="C:/Program Files/V-REP3/V-REP_PRO_EDU/", scene_path=''):
+        self.possible_actions = np.linspace(-10, 10, 41)
         if port_num is None:
             self.port_num = int(random.random() * 1000 + 19999)
         if dir_vrep == '':
@@ -124,7 +125,7 @@ class Q_learning():
                 '127.0.0.1', self.port_num,
                 waitUntilConnected=True,
                 doNotReconnectOnceDisconnected=True,
-                timeOutInMs=3000,
+                timeOutInMs=10000,
                 commThreadCycleInMs=0)  # Connect to V-REP
 
             if self.cid != -1:
@@ -192,7 +193,7 @@ class Q_learning():
         return self.data, self.image
 
     def send_data(self, speed):
-        speed = -10. * speed
+        # speed = -10. * speed
         for i, motor in enumerate(self.motors):
             vrep.simxSetJointTargetVelocity(self.cid, self.robot[motor], speed[i // 3], vrep.simx_opmode_blocking)
 
@@ -218,12 +219,15 @@ class Q_learning():
                 break
 
     def step(self, speed):
-        speed = speed.flatten()
+        # speed = speed.flatten()
+        speed = [self.possible_actions[speed[0]], self.possible_actions[speed[1]]]
         self.send_data(speed)
         self.check_ret(self.simxSynchronousTrigger())
         self.read_data(step=True)
         done = self.distance < 1.0
-        reward = (self.prev_distance - self.distance)
+        reward = (self.prev_distance - self.distance) * 10.
+        if np.all(np.array(speed) < 0):
+            reward -= 0.1
         return self.data, self.image, reward, done
 
     def done(self):

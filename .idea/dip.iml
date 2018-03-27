@@ -7,6 +7,7 @@
       <sourceFolder url="file://$MODULE_DIR$" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/vrepper" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/rainbow" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/ddqn" isTestSource="false" />
     </content>
     <orderEntry type="inheritedJdk" />
     <orderEntry type="sourceFolder" forTests="false" />
