@@ -62,7 +62,6 @@ def sumofsquares(y_true, y_pred):  # critic loss
 def buildmodel():
     print("Model building begins")
 
-    model = Sequential()
     keras.initializers.RandomUniform(minval=-0.1, maxval=0.1, seed=None)
 
     S = Input(shape=(IMAGE_ROWS, IMAGE_COLS, IMAGE_CHANNELS,), name='Input')

@@ -8,7 +8,7 @@ import os
 import shutil
 import matplotlib.pyplot as plt
 import tensorflow as tf
-from q_learning import Q_learning
+from maze_env import Q_learning
 
 # ADD SAVING!!! Dunno how to do it due to all this threading and global net shit
 

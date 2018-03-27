@@ -9,7 +9,7 @@ from ActorNetwork import ActorNetwork
 from CriticNetwork import CriticNetwork
 from ReplayBuffer import ReplayBuffer, InputBuffer
 from keras.preprocessing.sequence import pad_sequences
-from q_learning import Q_learning
+from maze_env import Q_learning
 import _pickle as pickle
 
 def playGame(train_indicator=0):    #1 means Train, 0 means simply Run

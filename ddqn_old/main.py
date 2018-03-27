@@ -10,7 +10,7 @@ from keras import backend as K
 import tensorflow as tf
 
 from networks import Networks
-from q_learning import Q_learning
+from maze_env import Q_learning
 
 class C51Agent:
     def __init__(self, image_size, data_size, action_size, num_atoms):
