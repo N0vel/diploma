@@ -7,7 +7,7 @@ import random
 import subprocess as sp
 import types
 from inspect import getfullargspec
-
+import matplotlib.pyplot as plt
 
 list_of_instances = []
 class instance():
@@ -238,13 +238,16 @@ class Q_learning():
 if __name__ == "__main__":
     scene_path = os.getcwd() + '/scenes/diploma.ttt'
     robot_1 = Q_learning(headless=False, scene_path=scene_path)
-    robot_2 = Q_learning(headless=False, scene_path=scene_path)
-    robot_3 = Q_learning(headless=False, scene_path=scene_path)
-    robot_4 = Q_learning(headless=False, scene_path=scene_path)
+    # robot_2 = Q_learning(headless=False, scene_path=scene_path)
+    # robot_3 = Q_learning(headless=False, scene_path=scene_path)
+    # robot_4 = Q_learning(headless=False, scene_path=scene_path)
     while True:
-        d, img, r, w = robot_1.step(np.array([1, 0.2]))
-        d, img, r, w = robot_2.step(np.array([0.2, 1]))
-        d, img, r, w = robot_3.step(np.array([1, 0.2]))
-        d, img, r, w = robot_4.step(np.array([0.2, 1]))
+        d, img, r, w = robot_1.step(np.array([5, 6]))
+        plt.imshow(img)
+        plt.show()
+        # d, img, r, w = robot_2.step(np.array([0.2, 1]))
+        # d, img, r, w = robot_3.step(np.array([1, 0.2]))
+        # d, img, r, w = robot_4.step(np.array([0.2, 1]))
+
 
 

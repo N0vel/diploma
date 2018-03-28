@@ -7,7 +7,7 @@ import random
 import subprocess as sp
 import types
 from inspect import getfullargspec
-
+import matplotlib.pyplot as plt
 
 list_of_instances = []  
 class instance():
@@ -178,6 +178,14 @@ class Environment():
         for i, motor in enumerate(self.motors):
             vrep.simxSetJointTargetVelocity(self.cid, self.robot[motor], speed[i // 3], vrep.simx_opmode_blocking)
 
+    def distance(self, p1, p2):
+        return np.sqrt(np.sum(np.power(p1 - p2, 2)))
+    #
+    #
+    #
+    #
+    #
+    # DELETE DUMMIES
     def reset(self):
         self.check_ret(self.simxStopSimulation(vrep.simx_opmode_oneshot), ignore_one=True)
         self.get_position()
@@ -185,13 +193,22 @@ class Environment():
         self.start_simulation(True)
         vrep.simxGetPingTime(self.cid)
 
-    def distance(self, p1, p2):
-        return np.sqrt(np.sum(np.power(p1 - p2, 2)))
-
     def set_random_targets(self):
         self.good_targets = list((np.random.rand(self.n_good*2).reshape((self.n_good, 2))- 0.5)*10)
         self.bad_targets = list((np.random.rand(self.n_bad*2).reshape((self.n_bad, 2)) - 0.5)*10)
-        SET IN ENVIRONMENT
+        self.g_t_handles = [vrep.simxCreateDummy(self.cid, 0.25, (0, 255, 0), vrep.simx_opmode_blocking)[1] for i in range(self.n_good)]
+        self.b_t_handles = [vrep.simxCreateDummy(self.cid, 0.25, (255, 0, 0), vrep.simx_opmode_blocking)[1] for i in range(self.n_bad)]
+        for i,handle in enumerate(self.g_t_handles):
+            vrep.simxSetObjectPosition(self.cid, handle, relativeToObjectHandle=-1,
+                                       position=(self.good_targets[i][0], self.good_targets[i][1], 0.),
+                                       operationMode=vrep.simx_opmode_blocking)
+        for i,handle in enumerate(self.b_t_handles):
+            vrep.simxSetObjectPosition(self.cid, handle, relativeToObjectHandle=-1,
+                                       position=(self.bad_targets[i][0], self.bad_targets[i][1], 0.),
+                                       operationMode=vrep.simx_opmode_blocking)
+
+      #  DUMMIES ARE INVISIBLE FOR CAMERA!
+
 
     def step(self, speed):
         speed = speed.flatten()
@@ -214,13 +231,18 @@ class Environment():
 
 
 if __name__ == "__main__":
-    scene_path = os.getcwd() + '/scenes/diploma.ttt'
+    scene_path = os.getcwd() + '/scenes/field.ttt'
     robot_1 = Environment(headless=False, scene_path=scene_path)
+    robot_1.send_data([0.2, 0.5])
+    robot_1.check_ret(vrep.simxSynchronousTrigger(robot_1.cid))
+    image = robot_1.read_data()
+    plt.imshow(image)
+    plt.show()
     # robot_2 = Environment(headless=False, scene_path=scene_path)
     # robot_3 = Environment(headless=False, scene_path=scene_path)
     # robot_4 = Environment(headless=False, scene_path=scene_path)
-    while True:
-        img, r, d = robot_1.step(np.array([1, 0.2]))
+    # while True:
+    #     img, r, d = robot_1.step(np.array([1, 0.2]))
         # img, r, d = robot_2.step(np.array([0.2, 1]))
         # img, r, d = robot_3.step(np.array([1, 0.2]))
         # img, r, d = robot_4.step(np.array([0.2, 1]))
