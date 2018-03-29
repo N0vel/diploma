@@ -14,26 +14,20 @@ from keras.optimizers import RMSprop
 import keras.backend as K
 from keras.callbacks import LearningRateScheduler, History
 import tensorflow as tf
-
-import pygame
-import wrapped_flappy_bird as game
-
-import scipy.misc
-import scipy.stats as st
-
+from field_env import Environment
+import os
 import threading
-import time
-import math
 
+scene_path = os.getcwd() + '/scenes/field.ttt'
 GAMMA = 0.99  # discount value
 BETA = 0.01  # regularisation coefficient
-IMAGE_ROWS = 85
-IMAGE_COLS = 84
+IMAGE_ROWS = 128
+IMAGE_COLS = 128
 IMAGE_CHANNELS = 4
 LEARNING_RATE = 7e-4
 EPISODE = 0
-THREADS = 16
-t_max = 5
+THREADS = 4
+t_max = 1000000
 const = 1e-5
 T = 0
 
@@ -83,8 +77,7 @@ def buildmodel():
 
 # function to preprocess an image before giving as input to the neural network
 def preprocess(image):
-    image = skimage.color.rgb2gray(image)
-    image = skimage.transform.resize(image, (IMAGE_ROWS, IMAGE_COLS), mode='constant')
+    image = image + 128
     image = skimage.exposure.rescale_intensity(image, out_range=(0, 255))
     image = image.reshape(1, image.shape[0], image.shape[1], 1)
     return image
@@ -103,7 +96,7 @@ a_t[0] = 1  # index 0 = no flap, 1= flap
 
 game_state = []
 for i in range(0, THREADS):
-    game_state.append(game.GameState(30000))
+    game_state.append(Environment(headless=False, scene_path=scene_path))
 
 
 def runprocess(thread_id, s_t):
