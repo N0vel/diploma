@@ -19,7 +19,7 @@ MAX_EP_STEP = 2500  # maxumum number of steps per episode
 MAX_GLOBAL_EP = 1000000  # total number of episodes
 GLOBAL_NET_SCOPE = 'Global_Net'
 UPDATE_GLOBAL_ITER = 10  # sets how often the global net is updated  # 10
-GAMMA = 0.99  # discount factor                                      #0.9
+GAMMA = 1.0  # discount factor                                      #0.9
 # ENTROPY_BETA = 0.01  # entropy factor                              #0.01
 INIT_EPSILON = 1.0
 ENTROPY_BETA = 0.1
@@ -96,7 +96,7 @@ class ACNet(object):
                 activation=tf.nn.relu6)
             flat = tf.layers.flatten(conv2)
             gru_in = tf.expand_dims(flat, axis=1, name='timely_input')  # [time_step, feature] => [time_step, batch, feature]
-            gru_cell = tf.contrib.rnn.GRUCell(cell_size)
+            gru_cell = tf.contrib.rnn.BasicRNNCell(cell_size)
             self.init_state = gru_cell.zero_state(batch_size=1, dtype=tf.float32)
             outputs, self.final_state = tf.nn.dynamic_rnn(cell=gru_cell, inputs=gru_in, initial_state=self.init_state, time_major=True)
             cell_out = tf.reshape(outputs, [-1, cell_size], name='flatten_rnn_outputs')  # joined state representation
@@ -147,7 +147,7 @@ class Worker(object):
                 a, rnn_state_ = self.AC.choose_action(image, rnn_state)  # get the action and next rnn state
                 if random.random() < self.epsilon:
                     a = np.array([1.-random.random()/2., 1.-random.random()/2.])
-                self.epsilon -= 0.00001
+                self.epsilon -= 0.000025
                 next_image, r, done = self.env.step(a)  # make step in environment
                 if not done:
                     done = True if ep_t == MAX_EP_STEP - 1 else False
