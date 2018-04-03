@@ -1,246 +1,265 @@
-import numpy as np
-import sys
-
-sys.path.append("game/")
-
-import skimage
-from skimage import transform, color, exposure
-
-import keras
-from keras.models import Sequential, Model, load_model
-from keras.layers import Dense, Flatten, Activation, Input
-from keras.layers.convolutional import Convolution2D
-from keras.optimizers import RMSprop
-import keras.backend as K
-from keras.callbacks import LearningRateScheduler, History
-import tensorflow as tf
-from field_env import Environment
 import os
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import threading
+import tensorflow as tf
+import numpy as np
+import time
+from a3c_model import build_policy_and_value_networks
+from keras import backend as K
+from field_env import Environment
+import random
 
-scene_path = os.getcwd() + '/scenes/field.ttt'
-GAMMA = 0.99  # discount value
-BETA = 0.01  # regularisation coefficient
-IMAGE_ROWS = 128
-IMAGE_COLS = 128
-IMAGE_CHANNELS = 4
-LEARNING_RATE = 7e-4
-EPISODE = 0
-THREADS = 4
-t_max = 1000000
-const = 1e-5
+# Path params
+EXPERIMENT_NAME = "diploma_a3c"
+SUMMARY_SAVE_PATH = "summaries/"+EXPERIMENT_NAME
+CHECKPOINT_SAVE_PATH = os.path.join(os.getcwd(), "./a3c.ckpt")
+CHECKPOINT_NAME = os.path.join(os.getcwd(), "./a3c.ckpt")
+CHECKPOINT_INTERVAL = 50
+SUMMARY_INTERVAL = 25
+TRAINING = True
+
+
+# Experiment params
+scene_path = os.path.dirname(os.getcwd()) + '/scenes/field.ttt'
+ACTIONS = 41
+POSSIBLE_ACTIONS = np.linspace(-1, 1, 41)
+NUM_CONCURRENT = 4
+EPSILON = 1.0
+EPSILON_STEP = 0.00001
+
+
+AGENT_HISTORY_LENGTH = 4
+RESIZED_WIDTH = 64
+RESIZED_HEIGHT = 64
+
+# DQN Params
+GAMMA = 0.99
+
+# Optimization Params
+# LEARNING_RATE = 0.00001
+LEARNING_RATE = 0.001
+
+# Shared global parameters
+t_max = 2500
 T = 0
+TMAX = 1000000
 
-episode_r = []
-episode_state = np.zeros((0, IMAGE_ROWS, IMAGE_COLS, IMAGE_CHANNELS))
-episode_output = []
-episode_critic = []
+def sample_policy_action(probs_1, probs_2):
+    """
+    Sample an action from an action probability distribution output by
+    the policy network.
+    """
+    # Subtract a tiny value from probabilities in order to avoid
+    # "ValueError: sum(pvals[:-1]) > 1.0" in numpy.multinomial IT DOESN'T HELP
+    probs_1 = probs_1.flatten()
+    probs_2 = probs_2.flatten()
 
-ACTIONS = 2
-a_t = np.zeros(ACTIONS)
+    # probs_1 = (probs_1 - np.finfo(np.float32).epsneg).flatten()
+    # probs_2 = (probs_2 - np.finfo(np.float32).epsneg).flatten()
+    # histogram_1 = np.random.multinomial(1, probs_1)
+    # action_index_1 = int(np.nonzero(histogram_1)[0])
+    # histogram_2 = np.random.multinomial(1, probs_2)
+    # action_index_2 = int(np.nonzero(histogram_2)[0])
 
+    action_index_1 = np.random.choice(np.array(range(ACTIONS)), p=probs_1)
+    action_index_2 = np.random.choice(np.array(range(ACTIONS)), p=probs_2)
 
-# loss function for policy output
-def logloss(y_true, y_pred):  # policy loss
-    return -K.sum(K.log(y_true * y_pred + (1 - y_true) * (1 - y_pred) + const), axis=-1)
-
-
-# BETA * K.sum(y_pred * K.log(y_pred + const) + (1-y_pred) * K.log(1-y_pred + const))   #regularisation term
-
-# loss function for critic output
-def sumofsquares(y_true, y_pred):  # critic loss
-    return K.sum(K.square(y_pred - y_true), axis=-1)
-
-
-# function buildmodel() to define the structure of the neural network in use
-def buildmodel():
-    print("Model building begins")
-
-    keras.initializers.RandomUniform(minval=-0.1, maxval=0.1, seed=None)
-
-    S = Input(shape=(IMAGE_ROWS, IMAGE_COLS, IMAGE_CHANNELS,), name='Input')
-    h0 = Convolution2D(16, kernel_size=(8, 8), strides=(4, 4), activation='relu', kernel_initializer='random_uniform',
-                       bias_initializer='random_uniform')(S)
-    h1 = Convolution2D(32, kernel_size=(4, 4), strides=(2, 2), activation='relu', kernel_initializer='random_uniform',
-                       bias_initializer='random_uniform')(h0)
-    h2 = Flatten()(h1)
-    h3 = Dense(256, activation='relu', kernel_initializer='random_uniform', bias_initializer='random_uniform')(h2)
-    P = Dense(1, name='o_P', activation='sigmoid', kernel_initializer='random_uniform',
-              bias_initializer='random_uniform')(h3)
-    V = Dense(1, name='o_V', kernel_initializer='random_uniform', bias_initializer='random_uniform')(h3)
-
-    model = Model(inputs=S, outputs=[P, V])
-    rms = RMSprop(lr=LEARNING_RATE, rho=0.99, epsilon=0.1)
-    model.compile(loss={'o_P': logloss, 'o_V': sumofsquares}, loss_weights={'o_P': 1., 'o_V': 0.5}, optimizer=rms)
-    return model
+    return action_index_1, action_index_2
 
 
-# function to preprocess an image before giving as input to the neural network
-def preprocess(image):
-    image = image + 128
-    image = skimage.exposure.rescale_intensity(image, out_range=(0, 255))
-    image = image.reshape(1, image.shape[0], image.shape[1], 1)
-    return image
+def actor_learner_thread(num, env, session, graph_ops, summary_ops, saver):
+    # We use global shared counter T, and TMAX constant
+    global TMAX, T, EPSILON, EPSILON_STEP
 
+    # Unpack graph ops
+    s, a1, a2, R, minimize, p_network, v_network = graph_ops
 
-# initialize a new model using buildmodel() or use load_model to resume training an already trained model
-model = buildmodel()
-# model = load_model("saved_models/model_updates3900", custom_objects={'logloss': logloss, 'sumofsquares': sumofsquares})
-model._make_predict_function()
-graph = tf.get_default_graph()
+    # Unpack tensorboard summary stuff
+    r_summary_placeholder, update_ep_reward, val_summary_placeholder, update_ep_val, summary_op = summary_ops
 
-intermediate_layer_model = Model(inputs=model.input, outputs=model.get_layer('o_P').output)
+    # Wrap env with AtariEnvironment helper class
+    time.sleep(5 * num)
 
-a_t[0] = 1  # index 0 = no flap, 1= flap
-# output of network represents probability of flap
+    # Set up per-episode counters
+    ep_reward = 0
+    ep_avg_v = 0
+    v_steps = 0
 
-game_state = []
-for i in range(0, THREADS):
-    game_state.append(Environment(headless=False, scene_path=scene_path))
+    while T < TMAX:
+        env.reset()
+        s_batch = []
+        past_rewards = []
+        a1_batch = []
+        a2_batch = []
+        t = 0
+        t_start = t
+        s_t = env.read_data()
+        terminal = False
+        while not (terminal or (t - t_start >= t_max)):
+            # Perform action a_t according to policy pi(a_t | s_t)
+            if random.random() > EPSILON:
+                probs_1, probs_2 = session.run(p_network, feed_dict={s: [s_t]})
+                action_index_1, action_index_2 = sample_policy_action(probs_1, probs_2)
+            else:
+                action_index_1, action_index_2 = random.choice(range(35, 41)), random.choice(range(35, 41))
+            EPSILON -= EPSILON_STEP
+            a_t1 = np.zeros([ACTIONS])
+            a_t2 = np.zeros([ACTIONS])
+            a_t1[action_index_1] = 1
+            a_t2[action_index_2] = 1
+            if t % 100 == 0:
+                print("A1: {0} A2:{1} V: {2}".format(POSSIBLE_ACTIONS[action_index_1],
+                                                     POSSIBLE_ACTIONS[action_index_2],
+                                                     session.run(v_network, feed_dict={s: [s_t]})[0][0]))
 
+            s_batch.append(s_t)
+            a1_batch.append(a_t1)
+            a2_batch.append(a_t2)
 
-def runprocess(thread_id, s_t):
-    global T
-    global a_t
-    global model
+            s_t1, r_t, terminal = env.step(np.array([POSSIBLE_ACTIONS[action_index_1],
+                                                  POSSIBLE_ACTIONS[action_index_2]]))
+            ep_reward += r_t
 
-    t = 0
-    t_start = t
-    terminal = False
-    r_t = 0
-    r_store = []
-    state_store = np.zeros((0, IMAGE_ROWS, IMAGE_COLS, IMAGE_CHANNELS))
-    output_store = []
-    critic_store = []
-    s_t = s_t.reshape(1, s_t.shape[0], s_t.shape[1], s_t.shape[2])
+            r_t = np.clip(r_t, -1, 1)
+            past_rewards.append(r_t)
 
-    while t - t_start < t_max and terminal == False:
-        t += 1
+            t += 1
+            s_t = s_t1
+
+        if terminal:
+            R_t = 0
+        else:
+            R_t = session.run(v_network, feed_dict={s: [s_t]})[0][0]  # Bootstrap from last state
+
+        R_batch = np.zeros(t)
+        for i in reversed(range(t_start, t)):
+            R_t = past_rewards[i] + GAMMA * R_t
+            R_batch[i] = R_t
+
+        session.run(minimize, feed_dict={R: R_batch,
+                                         a1: a1_batch,
+                                         a2: a2_batch,
+                                         s: s_batch})
+
+        # Save progress
+        if T % CHECKPOINT_INTERVAL == 0:
+            saver.save(session, CHECKPOINT_SAVE_PATH, global_step=T)
+
+        # Episode ended, collect stats and reset game
+        session.run(update_ep_reward, feed_dict={r_summary_placeholder: ep_reward})
+        print("THREAD:", num, "/ TIME", T, "/ REWARD", ep_reward, "/ EPSILON", EPSILON)
+        # Reset per-episode counters
+        ep_reward = 0
         T += 1
-        intermediate_output = 0
-
-        with graph.as_default():
-            out = model.predict(s_t)[0]
-            intermediate_output = intermediate_layer_model.predict(s_t)
-        no = np.random.rand()
-        a_t = [0, 1] if no < out else [1, 0]  # stochastic action
-        # a_t = [0,1] if 0.5 <y[0] else [1,0]  #deterministic action
-
-        x_t, r_t, terminal = game_state[thread_id].frame_step(a_t)
-        x_t = preprocess(x_t)
-
-        with graph.as_default():
-            critic_reward = model.predict(s_t)[1]
-
-        y = 0 if a_t[0] == 1 else 1
-
-        r_store = np.append(r_store, r_t)
-        state_store = np.append(state_store, s_t, axis=0)
-        output_store = np.append(output_store, y)
-        critic_store = np.append(critic_store, critic_reward)
-
-        s_t = np.append(x_t, s_t[:, :, :, :3], axis=3)
-        print(
-            "Frame = " + str(T) + ", Updates = " + str(EPISODE) + ", Thread = " + str(thread_id) + ", Output = " + str(
-                intermediate_output))
-
-    if terminal == False:
-        r_store[len(r_store) - 1] = critic_store[len(r_store) - 1]
-    else:
-        r_store[len(r_store) - 1] = -1
-        s_t = np.concatenate((x_t, x_t, x_t, x_t), axis=3)
-
-    for i in range(2, len(r_store) + 1):
-        r_store[len(r_store) - i] = r_store[len(r_store) - i] + GAMMA * r_store[len(r_store) - i + 1]
-
-    return s_t, state_store, output_store, r_store, critic_store
 
 
-# function to decrease the learning rate after every epoch. In this manner, the learning rate reaches 0, by 20,000 epochs
-def step_decay(epoch):
-    decay = 3.2e-8
-    lrate = LEARNING_RATE - epoch * decay
-    lrate = max(lrate, 0)
-    return lrate
+def build_graph():
+    # Create shared global policy and value networks
+    s, p_network, v_network, p_params, v_params = build_policy_and_value_networks(num_actions=ACTIONS,
+                                                                                  agent_history_length=AGENT_HISTORY_LENGTH,
+                                                                                  resized_width=RESIZED_WIDTH,
+                                                                                  resized_height=RESIZED_HEIGHT)
+
+    # Shared global optimizer
+    optimizer = tf.train.AdadeltaOptimizer(LEARNING_RATE)
+
+    # Op for applying remote gradients
+    R_t = tf.placeholder("float", [None])
+    a_t1 = tf.placeholder("float", [None, ACTIONS])
+    a_t2 = tf.placeholder("float", [None, ACTIONS])
+    log_prob_1 = tf.log(tf.reduce_sum(p_network[0] * a_t1, reduction_indices=1))
+    log_prob_2 = tf.log(tf.reduce_sum(p_network[1] * a_t2, reduction_indices=1))
+    p_loss_1 = -log_prob_1 * (R_t - v_network)
+    p_loss_2 = -log_prob_2 * (R_t - v_network)
+    p_loss = p_loss_1 + p_loss_2
+    v_loss = tf.reduce_mean(tf.square(R_t - v_network))
+
+    total_loss = p_loss + v_loss
+
+    minimize = optimizer.minimize(total_loss)
+    return s, a_t1, a_t2, R_t, minimize, p_network, v_network
 
 
-class actorthread(threading.Thread):
-    def __init__(self, thread_id, s_t):
-        threading.Thread.__init__(self)
-        self.thread_id = thread_id
-        self.next_state = s_t
-
-    def run(self):
-        global episode_output
-        global episode_r
-        global episode_critic
-        global episode_state
-
-        threadLock.acquire()
-        self.next_state, state_store, output_store, r_store, critic_store = runprocess(self.thread_id, self.next_state)
-        self.next_state = self.next_state.reshape(self.next_state.shape[1], self.next_state.shape[2],
-                                                  self.next_state.shape[3])
-
-        episode_r = np.append(episode_r, r_store)
-        episode_output = np.append(episode_output, output_store)
-        episode_state = np.append(episode_state, state_store, axis=0)
-        episode_critic = np.append(episode_critic, critic_store)
-
-        threadLock.release()
+# Set up some episode summary ops to visualize on tensorboard.
+def setup_summaries():
+    episode_reward = tf.Variable(0.)
+    tf.summary.scalar("Episode Reward", episode_reward)
+    r_summary_placeholder = tf.placeholder("float")
+    update_ep_reward = episode_reward.assign(r_summary_placeholder)
+    ep_avg_v = tf.Variable(0.)
+    tf.summary.scalar("Episode Value", ep_avg_v)
+    val_summary_placeholder = tf.placeholder("float")
+    update_ep_val = ep_avg_v.assign(val_summary_placeholder)
+    summary_op = tf.summary.merge_all()
+    return r_summary_placeholder, update_ep_reward, val_summary_placeholder, update_ep_val, summary_op
 
 
-states = np.zeros((0, IMAGE_ROWS, IMAGE_COLS, 4))
+def train(session, graph_ops, saver):
+    # Set up game environments (one per thread)
+    envs = [Environment(headless=False, scene_path=scene_path) for i in range(NUM_CONCURRENT)]
 
-# initializing state of each thread
-for i in range(0, len(game_state)):
-    image = game_state[i].getCurrentFrame()
-    image = preprocess(image)
-    state = np.concatenate((image, image, image, image), axis=3)
-    states = np.append(states, state, axis=0)
+    summary_ops = setup_summaries()
+    summary_op = summary_ops[-1]
 
-while True:
-    threadLock = threading.Lock()
-    threads = []
-    for i in range(0, THREADS):
-        threads.append(actorthread(i, states[i]))
 
-    states = np.zeros((0, IMAGE_ROWS, IMAGE_COLS, 4))
+    # Initialize variables
+    session.run(tf.global_variables_initializer())
+    writer = tf.summary.FileWriter(SUMMARY_SAVE_PATH, session.graph)
+    # Start NUM_CONCURRENT training threads
+    actor_learner_threads = [threading.Thread(target=actor_learner_thread,
+                                              args=(thread_id, envs[thread_id], session, graph_ops, summary_ops, saver))
+                             for thread_id in range(NUM_CONCURRENT)]
+    for t in actor_learner_threads:
+        t.start()
 
-    for i in range(0, THREADS):
-        threads[i].start()
+    last_summary_time = 0
+    while True:
+        now = time.time()
+        if now - last_summary_time > SUMMARY_INTERVAL:
+            summary_str = session.run(summary_op)
+            writer.add_summary(summary_str, float(T))
+            last_summary_time = now
+    for t in actor_learner_threads:
+        t.join()
 
-    # thread.join() ensures that all threads fininsh execution before proceeding further
-    for i in range(0, THREADS):
-        threads[i].join()
 
-    for i in range(0, THREADS):
-        state = threads[i].next_state
-        state = state.reshape(1, state.shape[0], state.shape[1], state.shape[2])
-        states = np.append(states, state, axis=0)
+def evaluation(session, graph_ops, saver):
+    saver.restore(session, CHECKPOINT_NAME)
+    print("Restored model weights from ", CHECKPOINT_NAME)
+    # Unpack graph ops
+    s, a_t1, a_t2, R_t, minimize, p_network, v_network = graph_ops
 
-    e_mean = np.mean(episode_r)
-    # advantage calculation for each action taken
-    advantage = episode_r - episode_critic
-    print("backpropagating")
+    # Wrap env with AtariEnvironment helper class
+    env = Environment(headless=False, scene_path=scene_path)
 
-    lrate = LearningRateScheduler(step_decay)
-    callbacks_list = [lrate]
+    for i_episode in range(100):
+        env.reset()
+        s_t = env.read_data()
+        ep_reward = 0
+        terminal = False
+        while not terminal:
+            # Forward the deep q network, get Q(s,a) values
+            probs_1, probs_2 = p_network.eval(session=session, feed_dict={s: [s_t]})
+            action_index_1, action_index_2 = sample_policy_action(probs_1, probs_2)
+            s_t1, r_t, terminal, info = env.step(np.array([POSSIBLE_ACTIONS[action_index_1],
+                                                           POSSIBLE_ACTIONS[action_index_2]]))
+            s_t = s_t1
+            ep_reward += r_t
+        print(ep_reward)
 
-    weights = {'o_P': advantage, 'o_V': np.ones(len(advantage))}
-    # backpropagation
-    history = model.fit(episode_state, [episode_output, episode_r], epochs=EPISODE + 1, batch_size=len(episode_output),
-                        callbacks=callbacks_list, sample_weight=weights, initial_epoch=EPISODE)
 
-    episode_r = []
-    episode_output = []
-    episode_state = np.zeros((0, IMAGE_ROWS, IMAGE_COLS, IMAGE_CHANNELS))
-    episode_critic = []
+def main(_):
+    g = tf.Graph()
+    with g.as_default(), tf.Session() as session:
+        K.set_session(session)
+        graph_ops = build_graph()
+        saver = tf.train.Saver()
+        if TRAINING:
+            train(session, graph_ops, saver)
+        else:
+            evaluation(session, graph_ops, saver)
 
-    f = open("rewards.txt", "a")
-    f.write(
-        "Update: " + str(EPISODE) + ", Reward_mean: " + str(e_mean) + ", Loss: " + str(history.history['loss']) + "\n")
-    f.close()
 
-    if EPISODE % 50 == 0:
-        model.save("saved_models/model_updates" + str(EPISODE))
-    EPISODE += 1
+if __name__ == "__main__":
+    tf.app.run()

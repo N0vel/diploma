@@ -8,6 +8,8 @@ import subprocess as sp
 import types
 from inspect import getfullargspec
 import matplotlib.pyplot as plt
+import distutils as dsp
+
 
 list_of_instances = []  
 class instance():
@@ -84,6 +86,8 @@ class Environment():
         self.get_position()
         self.visited_good = []
         self.visited_bad = []
+        # self.image_buf = np.zeros((4, 64, 64))
+        self.image_buf = np.zeros((64, 64, 4))
         self.start_simulation(True)
 
     def start_simulation(self, is_sync):
@@ -173,10 +177,24 @@ class Environment():
         self.position = np.asarray(vrep.simxGetObjectPosition(self.cid, self.robot['body'], -1,
                                                      vrep.simx_opmode_blocking)[1][:2])
 
+    def rgb2gray(self, rgb):
+        r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+        gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
+        return gray
+
+    # def extend_history_buffer(self, image):
+    #     self.image_buf[0, :, :], self.image_buf[1, :, :], self.image_buf[2, :, :],\
+    #         self.image_buf[3, :, :] = self.image_buf[1, :, :], self.image_buf[2, :, :], self.image_buf[3, :, :], image
+
+    def extend_history_buffer(self, image):
+        self.image_buf[:, :, 0], self.image_buf[:, :, 1], self.image_buf[:, :, 2], self.image_buf[:, :, 3] = \
+            self.image_buf[:, :, 1], self.image_buf[:, :, 2], self.image_buf[:, :, 3], image
+
     def read_data(self):
         res, resolution, image = vrep.simxGetVisionSensorImage(self.cid, self.robot[self.sensors[0]], 0, vrep.simx_opmode_blocking)
-        self.image = np.reshape(np.array(image, dtype='float32')+128, (64, 64, 3)) / 255.
-        return self.image
+        image = self.rgb2gray(np.reshape(np.array(image, dtype='float32')+128, (64, 64, 3))) / 255.
+        self.extend_history_buffer(image)
+        return self.image_buf.flatten()
 
     def send_data(self, speed):
         speed = speed * -10
@@ -221,6 +239,7 @@ class Environment():
         speed = speed.flatten()
         self.send_data(speed)
         self.check_ret(self.simxSynchronousTrigger())
+        image = self.read_data()
         self.get_position()
         reward = 0
         for i, target in enumerate(self.good_targets):
@@ -236,12 +255,12 @@ class Environment():
                 vrep.simxSetObjectPosition(self.cid, self.b_t_handles[i], relativeToObjectHandle=-1,
                                            position=(0., 0., -1.),
                                            operationMode=vrep.simx_opmode_blocking)
-                reward -= 1
+                reward -= -1
 
         done = len(self.visited_good) == self.n_targets
         if vrep.simxGetObjectPosition(self.cid, self.robot['body'], -1, vrep.simx_opmode_blocking)[1][2] < -1.:
             done = True
-        return self.image, reward, done
+        return image, reward, done
 
     def done(self):
         self.check_ret(self.simxStopSimulation(vrep.simx_opmode_oneshot), ignore_one=True)
@@ -252,7 +271,7 @@ if __name__ == "__main__":
     scene_path = os.getcwd() + '/scenes/field.ttt'
     robot_1 = Environment(headless=False, scene_path=scene_path)
     while True:
-        robot_1.send_data([0.2, 0.5])
+        robot_1.send_data(np.array([0.2, 0.5]))
         robot_1.check_ret(vrep.simxSynchronousTrigger(robot_1.cid))
         image = robot_1.read_data()
         plt.imshow(image)
