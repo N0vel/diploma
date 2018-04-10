@@ -48,12 +48,12 @@ class AC_Network():
             self.inputs = tf.placeholder(shape=[None, s_size], dtype=tf.float32)
             self.image_prep = tf.reshape(self.inputs, shape=[-1, 64, 64, 4])
             self.conv1 = slim.conv2d(activation_fn=tf.nn.elu,
-                                     inputs=self.image_prep, num_outputs=32,
+                                     inputs=self.image_prep, num_outputs=64,
                                      kernel_size=[8, 8], stride=[4, 4], padding='VALID')
             self.conv2 = slim.conv2d(activation_fn=tf.nn.elu,
                                      inputs=self.conv1, num_outputs=64,
                                      kernel_size=[4, 4], stride=[2, 2], padding='VALID')
-            hidden = slim.fully_connected(slim.flatten(self.conv2), 512, activation_fn=tf.nn.elu)
+            hidden = slim.fully_connected(slim.flatten(self.conv2), 256, activation_fn=tf.nn.elu)
 
             # Recurrent network for temporal dependencies
             lstm_cell = tf.contrib.rnn.BasicLSTMCell(256, state_is_tuple=True)
@@ -208,7 +208,7 @@ class Worker():
 
                     # If the episode hasn't ended, but the experience buffer is full, then we
                     # make an update step using that experience rollout.
-                    if len(episode_buffer) == 30 and d != True and episode_step_count != max_episode_length - 1:
+                    if len(episode_buffer) == 500 and d != True and episode_step_count != max_episode_length - 1:
                         # Since we don't know what the true final return is, we "bootstrap" from our current
                         # value estimation.
                         v1 = sess.run(self.local_AC.value,
@@ -257,7 +257,7 @@ class Worker():
 
 if __name__=='__main__':
     max_episode_length = 2500
-    gamma = .99 # discount rate for advantage estimation and reward discounting
+    gamma = .995 # discount rate for advantage estimation and reward discounting
     s_size = 64*64*4 # Observations are 4 history frames of 64 * 64 * 4
     a_size = 3
     load_model = False
@@ -273,7 +273,7 @@ if __name__=='__main__':
         os.makedirs('./frames')
     with tf.device("/gpu:0"):
         global_episodes = tf.Variable(0, dtype=tf.int32, name='global_episodes', trainable=False)
-        trainer = tf.train.AdamOptimizer(learning_rate=1e-4)        ###################################
+        trainer = tf.train.AdamOptimizer(learning_rate=1e-3)        ###################################
         master_network = AC_Network(s_size, a_size, 'global', None)  # Generate global network
         num_workers = 4
         workers = []

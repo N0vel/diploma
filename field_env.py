@@ -194,7 +194,8 @@ class Environment():
         res, resolution, image = vrep.simxGetVisionSensorImage(self.cid, self.robot[self.sensors[0]], 0, vrep.simx_opmode_blocking)
         image = self.rgb2gray(np.reshape(np.array(image, dtype='float32')+128, (64, 64, 3))) / 255.
         self.extend_history_buffer(image)
-        return self.image_buf.flatten()
+        # return self.image_buf.reshape(1, 64, 64, 4)
+        return self.image_buf
 
     def send_data(self, speed):
         speed = speed * -10
