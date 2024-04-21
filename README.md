@@ -1,1 +1,1 @@
-# reinforcement learning project for my diploma
+# Reinforcement learning experiments 
